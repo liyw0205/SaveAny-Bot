@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	storenum "github.com/krau/SaveAny-Bot/pkg/enums/storage"
 	"github.com/mitchellh/mapstructure"
@@ -29,7 +30,42 @@ func createStorageConfig(configType StorageConfig) func(cfg *BaseConfig) (Storag
 			return nil, fmt.Errorf("failed to decode %s storage config: %w", cfg.Type, err)
 		}
 
+		fillDefaultBasePath(configValue)
+
 		return configValue, nil
+	}
+}
+
+func fillDefaultBasePath(cfg StorageConfig) {
+	basePathSetter, ok := cfg.(interface {
+		SetDefaultBasePathIfEmpty(string)
+	})
+	if !ok {
+		return
+	}
+	defaultPath, ok := defaultBasePath(cfg.GetType())
+	if !ok {
+		return
+	}
+	basePathSetter.SetDefaultBasePathIfEmpty(defaultPath)
+}
+
+func defaultBasePath(storageType storenum.StorageType) (string, bool) {
+	switch storageType {
+	case storenum.Local:
+		return "./downloads", true
+	case storenum.Webdav, storenum.Alist, storenum.Rclone:
+		return "/telegram", true
+	case storenum.Minio, storenum.S3:
+		return "telegram", true
+	default:
+		return "", false
+	}
+}
+
+func setDefaultStringIfEmpty(value *string, fallback string) {
+	if strings.TrimSpace(*value) == "" {
+		*value = fallback
 	}
 }
 

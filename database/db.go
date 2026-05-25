@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/krau/SaveAny-Bot/config"
+	"github.com/krau/SaveAny-Bot/pkg/rule"
 	"gorm.io/gorm"
 	glogger "gorm.io/gorm/logger"
 )
@@ -80,5 +81,72 @@ func syncUsers(ctx context.Context) error {
 		}
 	}
 
+	if err := cleanupUnavailableStorageReferences(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func cleanupUnavailableStorageReferences(ctx context.Context) error {
+	knownStorages := make(map[string]struct{}, len(config.C().Storages))
+	for _, storage := range config.C().Storages {
+		knownStorages[storage.GetName()] = struct{}{}
+	}
+
+	names := make(map[string]struct{})
+	for _, user := range config.C().Users {
+		for _, storageName := range user.Storages {
+			if _, ok := knownStorages[storageName]; !ok && storageName != "" {
+				names[storageName] = struct{}{}
+			}
+		}
+	}
+
+	var users []User
+	if err := db.WithContext(ctx).
+		Where("default_storage <> ''").
+		Find(&users).Error; err != nil {
+		return fmt.Errorf("failed to find users with default storage: %w", err)
+	}
+	for _, user := range users {
+		if _, ok := knownStorages[user.DefaultStorage]; !ok {
+			names[user.DefaultStorage] = struct{}{}
+		}
+	}
+
+	var dirs []Dir
+	if err := db.WithContext(ctx).
+		Select("storage_name").
+		Group("storage_name").
+		Find(&dirs).Error; err != nil {
+		return fmt.Errorf("failed to find storage dirs: %w", err)
+	}
+	for _, dir := range dirs {
+		if _, ok := knownStorages[dir.StorageName]; !ok && dir.StorageName != "" {
+			names[dir.StorageName] = struct{}{}
+		}
+	}
+
+	var rules []Rule
+	if err := db.WithContext(ctx).
+		Select("storage_name").
+		Where("storage_name <> '' AND storage_name <> ?", rule.RuleStorNameChosen).
+		Group("storage_name").
+		Find(&rules).Error; err != nil {
+		return fmt.Errorf("failed to find storage rules: %w", err)
+	}
+	for _, rule := range rules {
+		if _, ok := knownStorages[rule.StorageName]; !ok {
+			names[rule.StorageName] = struct{}{}
+		}
+	}
+
+	for name := range names {
+		if err := ClearStorageReferences(ctx, name); err != nil {
+			return fmt.Errorf("failed to clear references for storage %s: %w", name, err)
+		}
+		log.FromContext(ctx).Warnf("Cleared references to unavailable storage: %s", name)
+	}
 	return nil
 }

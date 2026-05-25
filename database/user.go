@@ -2,7 +2,10 @@ package database
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/krau/SaveAny-Bot/pkg/rule"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -49,4 +52,40 @@ func GetUserByID(ctx context.Context, id uint) (*User, error) {
 		Preload(clause.Associations).
 		Where("id = ?", id).First(&user).Error
 	return &user, err
+}
+
+func ClearStorageReferences(ctx context.Context, storageName string) error {
+	if db == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+	if storageName == "" {
+		return nil
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&User{}).
+			Where("default_storage = ?", storageName).
+			Updates(map[string]any{
+				"default_storage": "",
+				"default_dir":     0,
+				"silent":          false,
+			}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&User{}).
+			Where("default_dir IN (?)", tx.Model(&Dir{}).Select("id").Where("storage_name = ?", storageName)).
+			Update("default_dir", 0).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().
+			Where("storage_name = ?", storageName).
+			Delete(&Dir{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&Rule{}).
+			Where("storage_name = ?", storageName).
+			Update("storage_name", rule.RuleStorNameChosen).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }

@@ -41,3 +41,7 @@ func (m *S3StorageConfig) GetType() storenum.StorageType {
 func (m *S3StorageConfig) GetName() string {
 	return m.Name
 }
+
+func (m *S3StorageConfig) SetDefaultBasePathIfEmpty(path string) {
+	setDefaultStringIfEmpty(&m.BasePath, path)
+}

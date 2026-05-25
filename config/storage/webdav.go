@@ -34,3 +34,7 @@ func (w *WebdavStorageConfig) GetType() storenum.StorageType {
 func (w *WebdavStorageConfig) GetName() string {
 	return w.Name
 }
+
+func (w *WebdavStorageConfig) SetDefaultBasePathIfEmpty(path string) {
+	setDefaultStringIfEmpty(&w.BasePath, path)
+}

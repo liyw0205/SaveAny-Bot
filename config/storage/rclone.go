@@ -31,3 +31,7 @@ func (r *RcloneStorageConfig) GetType() storenum.StorageType {
 func (r *RcloneStorageConfig) GetName() string {
 	return r.Name
 }
+
+func (r *RcloneStorageConfig) SetDefaultBasePathIfEmpty(path string) {
+	setDefaultStringIfEmpty(&r.BasePath, path)
+}

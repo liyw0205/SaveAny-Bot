@@ -39,3 +39,7 @@ func (m *MinioStorageConfig) GetType() storenum.StorageType {
 func (m *MinioStorageConfig) GetName() string {
 	return m.Name
 }
+
+func (m *MinioStorageConfig) SetDefaultBasePathIfEmpty(path string) {
+	setDefaultStringIfEmpty(&m.BasePath, path)
+}

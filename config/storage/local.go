@@ -25,3 +25,7 @@ func (l *LocalStorageConfig) GetType() storenum.StorageType {
 func (l *LocalStorageConfig) GetName() string {
 	return l.Name
 }
+
+func (l *LocalStorageConfig) SetDefaultBasePathIfEmpty(path string) {
+	setDefaultStringIfEmpty(&l.BasePath, path)
+}

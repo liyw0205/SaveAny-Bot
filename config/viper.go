@@ -179,7 +179,7 @@ func Init(ctx context.Context, configFile ...string) error {
 		if user.Blacklist {
 			userStorages[user.ID] = slice.Compact(slice.Difference(storages, user.Storages))
 		} else {
-			userStorages[user.ID] = user.Storages
+			userStorages[user.ID] = filterKnownStorageNames(user.Storages, storageNames)
 		}
 	}
 	if cfg.Proxy != "" {

@@ -36,3 +36,7 @@ func (a *AlistStorageConfig) GetType() storenum.StorageType {
 func (a *AlistStorageConfig) GetName() string {
 	return a.Name
 }
+
+func (a *AlistStorageConfig) SetDefaultBasePathIfEmpty(path string) {
+	setDefaultStringIfEmpty(&a.BasePath, path)
+}
