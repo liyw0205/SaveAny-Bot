@@ -17,9 +17,15 @@ import (
 var db *gorm.DB
 
 func Init(ctx context.Context) {
+	if err := Open(ctx); err != nil {
+		log.FromContext(ctx).Fatal("Database initialization failed", "error", err)
+	}
+}
+
+func Open(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 	if err := os.MkdirAll(filepath.Dir(config.C().DB.Path), 0755); err != nil {
-		logger.Fatal("Failed to create data directory: ", err)
+		return fmt.Errorf("failed to create data directory: %w", err)
 	}
 	var err error
 	db, err = gorm.Open(GetDialect(config.C().DB.Path), &gorm.Config{
@@ -33,20 +39,28 @@ func Init(ctx context.Context) {
 		PrepareStmt: true,
 	})
 	if err != nil {
-		logger.Fatal("Failed to open database: ", err)
+		return fmt.Errorf("failed to open database: %w", err)
 	}
 	logger.Debug("Database connected")
 	if err := db.AutoMigrate(&User{}, &Dir{}, &Rule{}, &WatchChat{}); err != nil {
-		logger.Fatal("Database migration failed; if upgrading from an old version, try deleting the database file and retrying", "error", err)
+		return fmt.Errorf("database migration failed; if upgrading from an old version, try deleting the database file and retrying: %w", err)
 	}
-	if err := syncUsers(ctx); err != nil {
-		logger.Fatal("Failed to sync users:", err)
+	if err := SyncUsers(ctx); err != nil {
+		return fmt.Errorf("failed to sync users: %w", err)
 	}
 	logger.Debug("Database migrated")
 	logger.Info("Database initialized")
+	return nil
 }
 
-func syncUsers(ctx context.Context) error {
+func Ready() bool {
+	return db != nil
+}
+
+func SyncUsers(ctx context.Context) error {
+	if db == nil {
+		return fmt.Errorf("database is not initialized")
+	}
 	logger := log.FromContext(ctx)
 	dbUsers, err := GetAllUsers(ctx)
 	if err != nil {

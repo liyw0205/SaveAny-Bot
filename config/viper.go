@@ -129,7 +129,7 @@ func Init(ctx context.Context, configFile ...string) error {
 		// API
 		"api.enable": false,
 		"api.host":   "0.0.0.0",
-		"api.port":   8080,
+		"api.port":   DefaultAPIPort,
 		"api.token":  "",
 	}
 

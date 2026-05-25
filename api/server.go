@@ -41,10 +41,26 @@ func NewServer(ctx context.Context) *Server {
 		}
 	})
 	mux.HandleFunc("/api/v1/tasks/", func(w http.ResponseWriter, r *http.Request) {
+		_, action := extractTaskIDAndAction(r.URL.Path)
+		switch action {
+		case "pause":
+			handlers.PauseTaskHandler(w, r)
+			return
+		case "retry":
+			handlers.RetryTaskHandler(w, r)
+			return
+		case "path":
+			handlers.UpdateTaskPathHandler(w, r)
+			return
+		}
 		// 根据方法和路径分发
 		switch r.Method {
 		case http.MethodGet:
-			handlers.GetTaskHandler(w, r)
+			if r.URL.Path == "/api/v1/tasks" {
+				handlers.ListTasksHandler(w, r)
+			} else {
+				handlers.GetTaskHandler(w, r)
+			}
 		case http.MethodDelete:
 			handlers.CancelTaskHandler(w, r)
 		default:
@@ -53,6 +69,7 @@ func NewServer(ctx context.Context) *Server {
 	})
 	mux.HandleFunc("/api/v1/storages", handlers.ListStoragesHandler)
 	mux.HandleFunc("/api/v1/task-types", handlers.GetTaskTypesHandler)
+	RegisterConfigEditorRoutes(ctx, mux, config.ConfigFileUsed())
 
 	// 404 处理
 	mux.HandleFunc("/", NotFoundHandler)

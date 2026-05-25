@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	userclient "github.com/krau/SaveAny-Bot/client/user"
 	"github.com/krau/SaveAny-Bot/common/cache"
 	"github.com/krau/SaveAny-Bot/common/i18n"
+	"github.com/krau/SaveAny-Bot/common/logbuffer"
 	"github.com/krau/SaveAny-Bot/common/utils/fsutil"
 	"github.com/krau/SaveAny-Bot/config"
 	"github.com/krau/SaveAny-Bot/core"
@@ -26,7 +28,7 @@ import (
 
 func Run(cmd *cobra.Command, _ []string) {
 	ctx, cancel := context.WithCancel(cmd.Context())
-	logger := log.NewWithOptions(os.Stdout, log.Options{
+	logger := log.NewWithOptions(io.MultiWriter(os.Stdout, logbuffer.Default()), log.Options{
 		Level:           log.InfoLevel,
 		ReportTimestamp: true,
 		TimeFormat:      time.TimeOnly,
@@ -51,10 +53,12 @@ func Run(cmd *cobra.Command, _ []string) {
 	if err != nil {
 		logger.Fatal("Init failed", "error", err)
 	}
-	go func() {
-		<-exitChan
-		cancel()
-	}()
+	if exitChan != nil {
+		go func() {
+			<-exitChan
+			cancel()
+		}()
+	}
 
 	core.Run(ctx)
 
@@ -88,6 +92,10 @@ func initAll(ctx context.Context) (<-chan struct{}, error) {
 	}
 	if err := api.Start(ctx); err != nil {
 		logger.Error("Failed to start API server", "error", err)
+	}
+	if strings.TrimSpace(config.C().Telegram.Token) == "" {
+		logger.Warn("Telegram bot token is empty; skip bot initialization and keep the config web/API server running")
+		return nil, nil
 	}
 	return bot.Init(ctx), nil
 }

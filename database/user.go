@@ -89,3 +89,30 @@ func ClearStorageReferences(ctx context.Context, storageName string) error {
 		return nil
 	})
 }
+
+func RenameStorageReferences(ctx context.Context, oldName, newName string) error {
+	if db == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+	if oldName == "" || newName == "" || oldName == newName {
+		return nil
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&User{}).
+			Where("default_storage = ?", oldName).
+			Update("default_storage", newName).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&Dir{}).
+			Where("storage_name = ?", oldName).
+			Update("storage_name", newName).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&Rule{}).
+			Where("storage_name = ?", oldName).
+			Update("storage_name", newName).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}

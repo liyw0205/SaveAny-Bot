@@ -14,6 +14,7 @@ type TaskStatus string
 const (
 	TaskStatusQueued    TaskStatus = "queued"
 	TaskStatusRunning   TaskStatus = "running"
+	TaskStatusPaused    TaskStatus = "paused"
 	TaskStatusCompleted TaskStatus = "completed"
 	TaskStatusFailed    TaskStatus = "failed"
 	TaskStatusCancelled TaskStatus = "cancelled"
@@ -40,22 +41,28 @@ type CreateTaskResponse struct {
 type TaskProgress struct {
 	TotalBytes      int64   `json:"total_bytes,omitempty"`
 	DownloadedBytes int64   `json:"downloaded_bytes,omitempty"`
+	UploadedBytes   int64   `json:"uploaded_bytes,omitempty"`
 	Percent         float64 `json:"percent,omitempty"`
 	SpeedMBPS       float64 `json:"speed_mbps,omitempty"`
 }
 
 // TaskInfoResponse 任务信息响应
 type TaskInfoResponse struct {
-	TaskID    string            `json:"task_id"`
-	Type      tasktype.TaskType `json:"type"`
-	Status    TaskStatus        `json:"status"`
-	Title     string            `json:"title"`
-	Progress  *TaskProgress     `json:"progress,omitempty"`
-	Storage   string            `json:"storage"`
-	Path      string            `json:"path"`
-	Error     string            `json:"error,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	TaskID        string            `json:"task_id"`
+	Type          tasktype.TaskType `json:"type"`
+	Status        TaskStatus        `json:"status"`
+	Title         string            `json:"title"`
+	Progress      *TaskProgress     `json:"progress,omitempty"`
+	Storage       string            `json:"storage"`
+	Path          string            `json:"path"`
+	SourceStorage string            `json:"source_storage,omitempty"`
+	SourcePath    string            `json:"source_path,omitempty"`
+	TargetStorage string            `json:"target_storage,omitempty"`
+	TargetPath    string            `json:"target_path,omitempty"`
+	Phase         string            `json:"phase,omitempty"`
+	Error         string            `json:"error,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
 }
 
 // TasksListResponse 任务列表响应
@@ -148,6 +155,22 @@ type TransferParams struct {
 	SourcePath    string `json:"source_path"`
 	TargetStorage string `json:"target_storage"`
 	TargetPath    string `json:"target_path"`
+}
+
+type UpdateTaskPathRequest struct {
+	Path string `json:"path"`
+}
+
+type ProxyTestRequest struct {
+	URL    string `json:"url"`
+	Target string `json:"target,omitempty"`
+}
+
+type ProxyTestResponse struct {
+	OK      bool   `json:"ok"`
+	MS      int64  `json:"ms"`
+	Message string `json:"message,omitempty"`
+	Target  string `json:"target"`
 }
 
 // TGFilesParams tgfiles 任务参数

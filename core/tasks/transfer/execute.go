@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,17 +10,23 @@ import (
 	"path/filepath"
 
 	"github.com/charmbracelet/log"
+	"github.com/krau/SaveAny-Bot/common/utils/ioutil"
 	"github.com/krau/SaveAny-Bot/config"
 	"github.com/krau/SaveAny-Bot/pkg/enums/ctxkey"
 	"github.com/krau/SaveAny-Bot/storage"
 	"golang.org/x/sync/errgroup"
 )
 
+var errTargetPathChanged = errors.New("target path changed")
+
 // Execute implements core.Executable.
 func (t *Task) Execute(ctx context.Context) error {
 	logger := log.FromContext(ctx).WithPrefix(fmt.Sprintf("transfer[%s]", t.ID))
 	logger.Info("Starting transfer task")
-	t.Progress.OnStart(ctx, t)
+	t.setPhase("running")
+	if t.Progress != nil {
+		t.Progress.OnStart(ctx, t)
+	}
 
 	workers := config.C().Workers
 	eg, gctx := errgroup.WithContext(ctx)
@@ -65,12 +72,15 @@ func (t *Task) Execute(ctx context.Context) error {
 		logger.Info("Transfer task completed successfully")
 	}
 
-	t.Progress.OnDone(ctx, t, err)
+	if t.Progress != nil {
+		t.Progress.OnDone(ctx, t, err)
+	}
 	return err
 }
 
 func (t *Task) processElement(ctx context.Context, elem TaskElement) error {
 	logger := log.FromContext(ctx).WithPrefix(fmt.Sprintf("file[%s]", elem.FileInfo.Name))
+	uploadedSize := elem.FileInfo.Size
 
 	// Check whether the source storage supports reading
 	readableStorage, ok := elem.SourceStorage.(storage.StorageReadable)
@@ -78,26 +88,38 @@ func (t *Task) processElement(ctx context.Context, elem TaskElement) error {
 		return fmt.Errorf("source storage %s does not support reading", elem.SourceStorage.Name())
 	}
 
-	logger.Info("Opening file from source storage")
-	reader, size, err := readableStorage.OpenFile(ctx, elem.SourcePath)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer reader.Close()
-
-	// Build target storage path: /target_path/filename
-	storagePath := path.Join(elem.TargetPath, elem.FileInfo.Name)
-
-	// Inject file size into context
-	ctx = context.WithValue(ctx, ctxkey.ContentLength, size)
-
 	if config.C().Stream {
-		if err := elem.TargetStorage.Save(ctx, reader, storagePath); err != nil {
-			return fmt.Errorf("failed to upload file to storage: %w", err)
+		for {
+			logger.Info("Opening file from source storage")
+			reader, size, err := readableStorage.OpenFile(ctx, elem.SourcePath)
+			if err != nil {
+				return fmt.Errorf("failed to open file: %w", err)
+			}
+			uploadedSize = size
+			err = t.uploadReader(ctx, elem, reader, size)
+			closeErr := reader.Close()
+			if err == nil && closeErr != nil {
+				err = closeErr
+			}
+			if errors.Is(err, errTargetPathChanged) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("failed to upload file to storage: %w", err)
+			}
+			break
 		}
 	} else {
+		logger.Info("Opening file from source storage")
+		reader, size, err := readableStorage.OpenFile(ctx, elem.SourcePath)
+		if err != nil {
+			return fmt.Errorf("failed to open file: %w", err)
+		}
+		uploadedSize = size
+		defer reader.Close()
+
 		logger.Info("Downloading to temporary file for ReadSeeker support")
-		tempFile, err := t.downloadToTemp(reader, elem.FileInfo.Name)
+		tempFile, err := t.downloadToTemp(ctx, reader, elem.FileInfo.Name)
 		if err != nil {
 			return fmt.Errorf("failed to download to temp: %w", err)
 		}
@@ -109,19 +131,30 @@ func (t *Task) processElement(ctx context.Context, elem TaskElement) error {
 		}
 
 		logger.Infof("Uploading file to storage (size: %d bytes)", size)
-		if err := elem.TargetStorage.Save(ctx, tempFile, storagePath); err != nil {
-			return fmt.Errorf("failed to upload file to storage: %w", err)
+		for {
+			if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
+				return fmt.Errorf("failed to seek temp file: %w", err)
+			}
+			if err := t.uploadReader(ctx, elem, tempFile, size); err != nil {
+				if errors.Is(err, errTargetPathChanged) {
+					continue
+				}
+				return fmt.Errorf("failed to upload file to storage: %w", err)
+			}
+			break
 		}
 	}
 
-	t.uploaded.Add(size)
-	t.Progress.OnProgress(ctx, t)
+	t.uploaded.Add(uploadedSize)
+	if t.Progress != nil {
+		t.Progress.OnProgress(ctx, t)
+	}
 
 	logger.Info("File uploaded successfully")
 	return nil
 }
 
-func (t *Task) downloadToTemp(reader io.Reader, filename string) (*os.File, error) {
+func (t *Task) downloadToTemp(ctx context.Context, reader io.Reader, filename string) (*os.File, error) {
 	tempDir := config.C().Temp.BasePath
 	if tempDir == "" {
 		tempDir = os.TempDir()
@@ -132,11 +165,70 @@ func (t *Task) downloadToTemp(reader io.Reader, filename string) (*os.File, erro
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	if _, err := io.Copy(tempFile, reader); err != nil {
+	t.setPhase("downloading")
+	if t.Progress != nil {
+		t.Progress.OnProgress(ctx, t)
+	}
+	wr := ioutil.NewProgressWriter(tempFile, func(n int) {
+		t.downloaded.Add(int64(n))
+		if t.Progress != nil {
+			t.Progress.OnProgress(ctx, t)
+		}
+	})
+
+	if _, err := io.Copy(wr, reader); err != nil {
 		tempFile.Close()
 		os.Remove(tempFile.Name())
 		return nil, fmt.Errorf("failed to copy to temp file: %w", err)
 	}
 
 	return tempFile, nil
+}
+
+func (t *Task) uploadReader(ctx context.Context, elem TaskElement, reader io.Reader, size int64) error {
+	version := t.pathVersion.Load()
+	uploadCtx, cancel := context.WithCancel(ctx)
+	t.registerUploadCancel(elem.ID, cancel)
+	defer func() {
+		cancel()
+		t.clearUploadCancel(elem.ID)
+	}()
+
+	t.setPhase("uploading")
+	if t.Progress != nil {
+		t.Progress.OnProgress(uploadCtx, t)
+	}
+	storagePath := path.Join(t.currentTargetPath(), elem.FileInfo.Name)
+	uploadCtx = context.WithValue(uploadCtx, ctxkey.ContentLength, size)
+	progressReader := ioutil.NewProgressReader(asReadSeeker(reader), size, func(read int64, total int64) {
+		t.setUploadingBytes(elem.ID, read)
+		if t.Progress != nil {
+			t.Progress.OnProgress(uploadCtx, t)
+		}
+	})
+	if err := elem.TargetStorage.Save(uploadCtx, progressReader, storagePath); err != nil {
+		if uploadCtx.Err() != nil && ctx.Err() == nil && version != t.pathVersion.Load() {
+			return errTargetPathChanged
+		}
+		return err
+	}
+	return nil
+}
+
+func asReadSeeker(reader io.Reader) io.ReadSeeker {
+	if rs, ok := reader.(io.ReadSeeker); ok {
+		return rs
+	}
+	return readSeekerAdapter{Reader: reader}
+}
+
+type readSeekerAdapter struct {
+	io.Reader
+}
+
+func (r readSeekerAdapter) Seek(offset int64, whence int) (int64, error) {
+	if offset == 0 && whence == io.SeekStart {
+		return 0, nil
+	}
+	return 0, fmt.Errorf("reader is not seekable")
 }

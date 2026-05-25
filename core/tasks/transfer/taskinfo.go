@@ -26,18 +26,28 @@ func (e *TaskElement) SourceStorageName() string {
 type TaskInfo interface {
 	TaskID() string
 	TotalSize() int64
+	Downloaded() int64
 	Uploaded() int64
 	Count() int
 	Processing() []TaskElementInfo
 	FailedFiles() []string
+	Phase() string
+	SourceStorageName() string
+	SourcePath() string
+	TargetStorageName() string
+	TargetPath() string
 }
 
 func (t *Task) TotalSize() int64 {
 	return t.totalSize
 }
 
+func (t *Task) Downloaded() int64 {
+	return t.downloaded.Load()
+}
+
 func (t *Task) Uploaded() int64 {
-	return t.uploaded.Load()
+	return t.uploaded.Load() + t.uploadedInFlight()
 }
 
 func (t *Task) Count() int {
@@ -70,4 +80,35 @@ func (t *Task) FailedFiles() []string {
 		}
 	}
 	return result
+}
+
+func (t *Task) Phase() string {
+	t.phaseMu.RLock()
+	defer t.phaseMu.RUnlock()
+	return t.phase
+}
+
+func (t *Task) SourceStorageName() string {
+	if len(t.elems) == 0 {
+		return ""
+	}
+	return t.elems[0].SourceStorage.Name()
+}
+
+func (t *Task) SourcePath() string {
+	if len(t.elems) == 0 {
+		return ""
+	}
+	return t.elems[0].SourcePath
+}
+
+func (t *Task) TargetStorageName() string {
+	if len(t.elems) == 0 {
+		return ""
+	}
+	return t.elems[0].TargetStorage.Name()
+}
+
+func (t *Task) TargetPath() string {
+	return t.currentTargetPath()
 }

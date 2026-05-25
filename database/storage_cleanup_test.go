@@ -77,6 +77,65 @@ func TestClearStorageReferences(t *testing.T) {
 	}
 }
 
+func TestRenameStorageReferences(t *testing.T) {
+	ctx := context.Background()
+	openTestDB(t)
+
+	user := User{
+		ChatID:         1001,
+		DefaultStorage: "old",
+		Silent:         true,
+	}
+	if err := db.WithContext(ctx).Create(&user).Error; err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	dir := Dir{UserID: user.ID, StorageName: "old", Path: "/old"}
+	if err := db.WithContext(ctx).Create(&dir).Error; err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	user.DefaultDir = dir.ID
+	if err := db.WithContext(ctx).Save(&user).Error; err != nil {
+		t.Fatalf("failed to update user default dir: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&Rule{
+		UserID:      user.ID,
+		Type:        rule.FileNameRegex.String(),
+		Data:        ".*",
+		StorageName: "old",
+		DirPath:     "/old",
+	}).Error; err != nil {
+		t.Fatalf("failed to create rule: %v", err)
+	}
+
+	if err := RenameStorageReferences(ctx, "old", "new"); err != nil {
+		t.Fatalf("rename failed: %v", err)
+	}
+
+	var gotUser User
+	if err := db.WithContext(ctx).First(&gotUser, user.ID).Error; err != nil {
+		t.Fatalf("failed to load user: %v", err)
+	}
+	if gotUser.DefaultStorage != "new" || gotUser.DefaultDir != dir.ID || !gotUser.Silent {
+		t.Fatalf("expected user defaults to move to new storage, got storage=%q dir=%d silent=%v", gotUser.DefaultStorage, gotUser.DefaultDir, gotUser.Silent)
+	}
+
+	var gotDir Dir
+	if err := db.WithContext(ctx).First(&gotDir, dir.ID).Error; err != nil {
+		t.Fatalf("failed to load dir: %v", err)
+	}
+	if gotDir.StorageName != "new" {
+		t.Fatalf("expected dir storage to be renamed, got %q", gotDir.StorageName)
+	}
+
+	var gotRule Rule
+	if err := db.WithContext(ctx).Where("user_id = ?", user.ID).First(&gotRule).Error; err != nil {
+		t.Fatalf("failed to load rule: %v", err)
+	}
+	if gotRule.StorageName != "new" {
+		t.Fatalf("expected rule storage to be renamed, got %q", gotRule.StorageName)
+	}
+}
+
 func openTestDB(t *testing.T) {
 	t.Helper()
 	var err error
